@@ -85,7 +85,7 @@ If no trades are recommended, use an empty trades array."""
 def call_openai_api(prompt: str, api_key: str, model: str = "gpt-4") -> str:
     """Call OpenAI API and return response"""
     print (prompt)
-    sys.exit()
+    # sys.exit()
     if not HAS_OPENAI:
         raise ImportError("openai package not installed. Run: pip install openai")
 

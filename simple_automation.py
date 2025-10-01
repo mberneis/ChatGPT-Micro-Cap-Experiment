@@ -11,9 +11,10 @@ Usage:
 import json
 import os
 import re
+import sys
 import argparse
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 import pandas as pd
 
 # Import existing trading functions
@@ -31,16 +32,16 @@ except ImportError:
 
 def generate_trading_prompt(portfolio_df: pd.DataFrame, cash: float, total_equity: float) -> str:
     """Generate a trading prompt with current portfolio data"""
-    
+
     # Format holdings
     if portfolio_df.empty:
         holdings_text = "No current holdings"
     else:
         holdings_text = portfolio_df.to_string(index=False)
-    
+
     # Get current date
     today = last_trading_date().date().isoformat()
-    
+
     prompt = f"""You are a professional portfolio analyst. Here is your current portfolio state as of {today}:
 
 [ Holdings ]
@@ -75,18 +76,21 @@ Respond with ONLY a JSON object in this exact format:
     "confidence": 0.8
 }}
 
-Only recommend trades you are confident about. If no trades are recommended, use an empty trades array."""
-    
+Only recommend trades with a confidence rate of at least 80%.
+If no trades are recommended, use an empty trades array."""
+
     return prompt
 
 
 def call_openai_api(prompt: str, api_key: str, model: str = "gpt-4") -> str:
     """Call OpenAI API and return response"""
+    print (prompt)
+    sys.exit()
     if not HAS_OPENAI:
         raise ImportError("openai package not installed. Run: pip install openai")
-    
+
     client = openai.OpenAI(api_key=api_key)
-    
+
     try:
         response = client.chat.completions.create(
             model=model,
@@ -94,9 +98,12 @@ def call_openai_api(prompt: str, api_key: str, model: str = "gpt-4") -> str:
                 {"role": "system", "content": "You are a professional portfolio analyst. Always respond with valid JSON in the exact format requested."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.3,
-            max_tokens=1500
+            temperature=0.7,
+            max_tokens=2500
         )
+        print ("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+        print( response.choices[0].message.content)
+        print ("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
         return response.choices[0].message.content
     except Exception as e:
         return f'{{"error": "API call failed: {e}"}}'
@@ -105,24 +112,28 @@ def call_openai_api(prompt: str, api_key: str, model: str = "gpt-4") -> str:
 def parse_llm_response(response: str) -> Dict[str, Any]:
     """Parse LLM response and extract trading decisions"""
     try:
+        # Clean the response first
+        response = response.strip()
+
         # Try to extract JSON from response
         json_match = re.search(r'\{.*\}', response, re.DOTALL)
         if json_match:
-            json_str = json_match.group()
+            json_str = json_match.group().strip()
             return json.loads(json_str)
         else:
+            # Try to parse the entire response as JSON
             return json.loads(response)
     except json.JSONDecodeError as e:
         print(f"Failed to parse LLM response: {e}")
-        print(f"Raw response: {response}")
+        print(f"Raw response: {response[:500]}...")  # Truncate long responses
         return {"error": "Failed to parse response", "raw_response": response}
 
 
-def execute_automated_trades(trades: List[Dict[str, Any]], portfolio_df: pd.DataFrame, cash: float) -> tuple[pd.DataFrame, float]:
+def execute_automated_trades(trades: List[Dict[str, Any]], portfolio_df: pd.DataFrame, cash: float) -> Tuple[pd.DataFrame, float]:
     """Execute trades recommended by LLM"""
-    
+
     print(f"\n=== Executing {len(trades)} LLM-recommended trades ===")
-    
+
     for trade in trades:
         action = trade.get('action', '').lower()
         ticker = trade.get('ticker', '').upper()
@@ -130,7 +141,7 @@ def execute_automated_trades(trades: List[Dict[str, Any]], portfolio_df: pd.Data
         price = float(trade.get('price', 0))
         stop_loss = float(trade.get('stop_loss', 0))
         reason = trade.get('reason', 'LLM recommendation')
-        
+
         if action == 'buy':
             if shares > 0 and price > 0 and ticker:
                 cost = shares * price
@@ -144,7 +155,7 @@ def execute_automated_trades(trades: List[Dict[str, Any]], portfolio_df: pd.Data
                     print(f"BUY REJECTED: {ticker} - Insufficient cash (need ${cost:.2f}, have ${cash:.2f})")
             else:
                 print(f"INVALID BUY ORDER: {trade}")
-        
+
         elif action == 'sell':
             if shares > 0 and price > 0 and ticker:
                 proceeds = shares * price
@@ -155,65 +166,69 @@ def execute_automated_trades(trades: List[Dict[str, Any]], portfolio_df: pd.Data
                 print(f"  Simulated: Cash increased by ${proceeds:.2f}, new balance: ${cash:.2f}")
             else:
                 print(f"INVALID SELL ORDER: {trade}")
-        
+
         elif action == 'hold':
             print(f"HOLD: {ticker} - {reason}")
-        
+
         else:
             print(f"UNKNOWN ACTION: {action} for {ticker}")
-    
+
     return portfolio_df, cash
 
 
 def run_automated_trading(api_key: str, model: str = "gpt-4", data_dir: str = "Start Your Own", dry_run: bool = False):
     """Run the automated trading process"""
-    
+
     print("=== Automated Trading System ===")
-    
+
     # Set up data directory
     data_path = Path(data_dir)
     set_data_dir(data_path)
-    
+
     # Load current portfolio
     portfolio_file = data_path / "chatgpt_portfolio_update.csv"
     if portfolio_file.exists():
-        portfolio_df, cash = load_latest_portfolio_state(str(portfolio_file))
+        portfolio_data, cash = load_latest_portfolio_state()
+        if not isinstance(portfolio_data, pd.DataFrame):
+            portfolio_df = pd.DataFrame(portfolio_data)
+        else:
+            portfolio_df = portfolio_data
     else:
         portfolio_df = pd.DataFrame(columns=["ticker", "shares", "stop_loss", "buy_price", "cost_basis"])
         cash = 10000.0  # Default starting cash
-    
+
     # Calculate total equity (simplified)
     total_value = portfolio_df['cost_basis'].sum() if not portfolio_df.empty and 'cost_basis' in portfolio_df.columns else 0.0
     total_equity = cash + total_value
-    
+
     print(f"Portfolio loaded: ${cash:,.2f} cash, ${total_equity:,.2f} total equity")
-    
+
     # Generate prompt
     prompt = generate_trading_prompt(portfolio_df, cash, total_equity)
     print(f"\nGenerated prompt ({len(prompt)} characters)")
-    
+
     # Call LLM
     print("Calling LLM for trading recommendations...")
     response = call_openai_api(prompt, api_key, model)
     print(f"Received response ({len(response)} characters)")
-    
+
     # Parse response
     parsed_response = parse_llm_response(response)
-    
+
     if "error" in parsed_response:
         print(f"Error: {parsed_response['error']}")
         return
-    
+
     # Display analysis
     analysis = parsed_response.get('analysis', 'No analysis provided')
     confidence = parsed_response.get('confidence', 0.0)
     trades = parsed_response.get('trades', [])
-    
+
     print(f"\n=== LLM Analysis ===")
     print(f"Analysis: {analysis}")
     print(f"Confidence: {confidence:.1%}")
     print(f"Recommended trades: {len(trades)}")
-    
+
     # Execute trades
     if trades and not dry_run:
         portfolio_df, cash = execute_automated_trades(trades, portfolio_df, cash)
@@ -223,16 +238,19 @@ def run_automated_trading(api_key: str, model: str = "gpt-4", data_dir: str = "S
             print(f"  {trade.get('action', 'unknown').upper()}: {trade.get('shares', 0)} shares of {trade.get('ticker', 'unknown')} at ${trade.get('price', 0):.2f}")
     else:
         print("No trades recommended")
-    
+
     # Save the LLM response for review
     response_file = data_path / "llm_responses.jsonl"
-    with open(response_file, "a") as f:
-        f.write(json.dumps({
-            "timestamp": pd.Timestamp.now().isoformat(),
-            "response": parsed_response,
-            "raw_response": response
-        }) + "\n")
-    
+    try:
+        with open(response_file, "a") as f:
+            f.write(json.dumps({
+                "timestamp": pd.Timestamp.now().isoformat(),
+                "response": parsed_response,
+                "raw_response": response
+            }) + "\n")
+    except Exception as e:
+        print(f"Warning: Could not save response to {response_file}: {e}")
+
     print(f"\n=== Analysis Complete ===")
     print(f"Response saved to: {response_file}")
 
@@ -244,15 +262,15 @@ def main():
     parser.add_argument("--model", default="gpt-4", help="OpenAI model to use")
     parser.add_argument("--data-dir", default="Start Your Own", help="Data directory")
     parser.add_argument("--dry-run", action="store_true", help="Don't execute trades, just show recommendations")
-    
+
     args = parser.parse_args()
-    
+
     # Get API key
     api_key = args.api_key or os.getenv("OPENAI_API_KEY")
     if not api_key:
         print("Error: OpenAI API key required. Set OPENAI_API_KEY env var or use --api-key")
         return
-    
+
     # Run automated trading
     run_automated_trading(
         api_key=api_key,

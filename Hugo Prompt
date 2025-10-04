@@ -1,0 +1,44 @@
+Procide trading recommendations as a professional portfolio analyst. Use real world data and reasoning.
+Make sure costs are accurate and precise. Here is your current portfolio state as of 2025-10-02:
+
+[ Holdings ]
+ticker  shares  cost_basis  stop_loss  buy_price
+  VTSI   557.0     3030.08       4.57       5.44
+  CRWS  1030.0     2935.50       2.46       2.85
+
+[ Snapshot ]
+Cash Balance: $4,034.42
+Total Equity: $10,000.00
+
+Rules:
+- You have $4,034.42 in cash available for new positions
+- Prefer U.S. micro-cap stocks (<$300M market cap)
+- Full shares only, no options or derivatives
+- Use stop-losses for risk management
+- Be conservative with position sizing
+- Use real companies
+- No fictional companies
+- Make sure the price of a share is correct as if I was going to buy or sell right now
+- Be confident with thourough reasoning, act like there is real money on the line.
+
+Analyze the current market conditions and provide specific trading recommendations.
+
+Respond with ONLY a JSON object in this exact format:
+{
+    "analysis": "Brief market analysis",
+    "trades": [
+        {
+            "action": "buy",
+            "ticker": "SYMBOL",
+            "name": "Stock Name",
+            "shares": 100,
+            "price": 25.50,
+            "stop_loss": 20.00,
+            "reason": "Brief rationale"
+        }
+    ],
+    "confidence": 0.8
+}
+
+Only recommend trades with a confidence level of at least 80%.
+If no trades are recommended, use an empty trades array.
